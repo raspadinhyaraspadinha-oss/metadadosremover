@@ -27,10 +27,25 @@ import { startCleanupLoop } from "./cleanup.js";
 const app = express();
 const clientDistPath = path.join(process.cwd(), "dist", "client");
 const adminHtmlPath = path.join(process.cwd(), "server", "public", "admin.html");
+const adminJsPath = path.join(process.cwd(), "server", "public", "admin.js");
 
 app.set("trust proxy", 1);
 app.use(cors());
-app.use(helmet({ crossOriginResourcePolicy: false }));
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", "data:", "blob:"],
+        mediaSrc: ["'self'", "blob:"],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"]
+      }
+    }
+  })
+);
 app.use(express.json({ limit: "1mb" }));
 app.use(
   rateLimit({
@@ -357,6 +372,15 @@ app.get("/admin", requireAdmin, (req, res) => {
     return;
   }
   res.sendFile(adminHtmlPath);
+});
+
+app.get("/admin.js", requireAdmin, (req, res) => {
+  if (!fs.existsSync(adminJsPath)) {
+    res.status(404).send("Arquivo JS do dashboard admin não encontrado.");
+    return;
+  }
+  res.type("application/javascript");
+  res.sendFile(adminJsPath);
 });
 
 if (fs.existsSync(clientDistPath)) {
