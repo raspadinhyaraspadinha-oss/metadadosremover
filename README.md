@@ -30,6 +30,7 @@ Serviço web full-stack para remover metadados de imagens e vídeos voltado para
   - `POST /api/job/:job_id/retry`
 - Limites por `.env` (arquivo e lote), rate limit, sanitização de nomes e cleanup automático por TTL.
 - Sem armazenamento permanente: arquivos expiram e são limpos.
+- Dashboard privado em `/admin` com autenticação Basic (`ADMIN_USER`/`ADMIN_PASSWORD`) para ver uploads e baixar original/limpo.
 
 ## Estrutura de pastas
 
@@ -42,6 +43,8 @@ Serviço web full-stack para remover metadados de imagens e vídeos voltado para
 │       ├── main.jsx
 │       └── styles.css
 ├── server/
+│   ├── public/
+│   │   └── admin.html
 │   ├── cleanup.js
 │   ├── config.js
 │   ├── index.js
@@ -96,6 +99,28 @@ Veja `.env.example`. Principais:
 - `TEMP_TTL_MINUTES`
 - `RATE_LIMIT_WINDOW_MS`
 - `RATE_LIMIT_MAX`
+- `ADMIN_USER`
+- `ADMIN_PASSWORD`
+
+## Dashboard privado (somente você)
+
+Configure no `.env`:
+
+```env
+ADMIN_USER=seu-usuario
+ADMIN_PASSWORD=sua-senha-forte
+```
+
+Acesse:
+
+- `http://localhost:3000/admin`
+
+O navegador pedirá usuário/senha via HTTP Basic Auth. Nesse painel você consegue:
+
+- Ver lotes recentes (batch_id, IP de origem, criação, expiração, status).
+- Ver arquivos de um lote (job_id, nome, tipo, tamanho antes/depois, status).
+- Baixar **arquivo original** enviado.
+- Baixar **arquivo limpo** (quando pronto).
 
 ## Deploy na Railway
 
@@ -129,6 +154,13 @@ Resposta:
 ### `GET /api/batch/:batch_id`
 
 Retorna status de todos os jobs do batch e progresso global.
+
+### Rotas admin (protegidas por Basic Auth)
+
+- `GET /api/admin/batches`
+- `GET /api/admin/batch/:batch_id`
+- `GET /api/admin/job/:job_id/original`
+- `GET /api/admin/job/:job_id/clean`
 
 ### `GET /api/job/:job_id/download`
 

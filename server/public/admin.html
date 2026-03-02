@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard Admin | MetaDados Remover</title>
+    <style>
+      :root { font-family: Inter, Arial, sans-serif; color-scheme: light dark; }
+      body { margin: 0; background: #0e1118; color: #f3f4f7; }
+      main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+      .card { background: #171c28; border-radius: 12px; padding: 12px; margin-bottom: 14px; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      button, select { border: 0; border-radius: 8px; padding: 8px 10px; }
+      button { background: #2c76ff; color: #fff; cursor: pointer; font-weight: 600; }
+      button.secondary { background: #253046; }
+      table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+      th, td { border-bottom: 1px solid #2b3342; padding: 8px; text-align: left; vertical-align: top; }
+      .muted { color: #a4adbd; }
+      .ok { color: #8be28b; }
+      .err { color: #ff9797; }
+      code { background: #111520; padding: 1px 4px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Dashboard administrativo</h1>
+      <p class="muted">Visão privada dos uploads recebidos. Arquivos expiram automaticamente conforme TTL.</p>
+
+      <section class="card">
+        <div class="row">
+          <button id="refresh">Atualizar lotes</button>
+          <label>
+            Lote:
+            <select id="batchSelect"></select>
+          </label>
+          <button id="loadBatch" class="secondary">Ver detalhes</button>
+          <span id="status" class="muted"></span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Lotes recentes</h3>
+        <div id="batches"></div>
+      </section>
+
+      <section class="card">
+        <h3>Arquivos do lote selecionado</h3>
+        <div id="jobs"></div>
+      </section>
+    </main>
+
+    <script>
+      const batchesEl = document.getElementById("batches");
+      const jobsEl = document.getElementById("jobs");
+      const batchSelect = document.getElementById("batchSelect");
+      const statusEl = document.getElementById("status");
+      const refreshBtn = document.getElementById("refresh");
+      const loadBatchBtn = document.getElementById("loadBatch");
+
+      const formatBytes = (bytes = 0) => {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+        return (bytes / 1024 / 1024).toFixed(2) + " MB";
+      };
+
+      const escape = (s = "") => String(s).replace(/[&<>"']/g, m => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;"
+      })[m]);
+
+      async function loadBatches() {
+        statusEl.textContent = "Carregando lotes...";
+        const response = await fetch("/api/admin/batches?limit=150");
+        const payload = await response.json();
+        if (!response.ok) {
+          statusEl.textContent = payload.error || "Falha ao carregar lotes";
+          return;
+        }
+        const items = payload.batches || [];
+        batchSelect.innerHTML = items.map(item =>
+          `<option value="${item.batch.id}">${item.batch.id} (${item.counts.total} arquivos)</option>`
+        ).join("");
+
+        if (!items.length) {
+          batchesEl.innerHTML = "<p class='muted'>Nenhum lote registrado.</p>";
+          statusEl.textContent = "Sem lotes.";
+          return;
+        }
+
+        batchesEl.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>batch_id</th>
+                <th>Criado em</th>
+                <th>IP origem</th>
+                <th>Arquivos</th>
+                <th>Prontos</th>
+                <th>Erros</th>
+                <th>Expira em</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${items.map(item => `
+                <tr>
+                  <td><code>${escape(item.batch.id)}</code></td>
+                  <td>${new Date(item.batch.created_at).toLocaleString()}</td>
+                  <td>${escape(item.batch.source_ip || "-")}</td>
+                  <td>${item.counts.total}</td>
+                  <td class="ok">${item.counts.ready || 0}</td>
+                  <td class="err">${item.counts.error || 0}</td>
+                  <td>${new Date(item.batch.expires_at).toLocaleString()}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+        statusEl.textContent = `${items.length} lote(s) carregado(s).`;
+      }
+
+      async function loadBatchDetails(batchId) {
+        if (!batchId) return;
+        statusEl.textContent = "Carregando arquivos do lote...";
+        const response = await fetch(`/api/admin/batch/${batchId}`);
+        const payload = await response.json();
+        if (!response.ok) {
+          statusEl.textContent = payload.error || "Falha ao carregar lote.";
+          return;
+        }
+        const jobs = payload.jobs || [];
+        if (!jobs.length) {
+          jobsEl.innerHTML = "<p class='muted'>Este lote não possui arquivos.</p>";
+          return;
+        }
+
+        jobsEl.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>job_id</th>
+                <th>Arquivo</th>
+                <th>Status</th>
+                <th>Tipo</th>
+                <th>Tamanho (antes/depois)</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${jobs.map(job => `
+                <tr>
+                  <td><code>${escape(job.id)}</code></td>
+                  <td>${escape(job.original_name)}</td>
+                  <td>${escape(job.status)}</td>
+                  <td>${escape(job.mimetype || "-")}</td>
+                  <td>${formatBytes(job.size_before || 0)} / ${job.size_after ? formatBytes(job.size_after) : "-"}</td>
+                  <td>
+                    <a href="/api/admin/job/${job.id}/original" target="_blank">Baixar original</a>
+                    ${job.status === "ready" ? ` | <a href="/api/admin/job/${job.id}/clean" target="_blank">Baixar limpo</a>` : ""}
+                  </td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+        statusEl.textContent = `Lote ${batchId} carregado (${jobs.length} arquivo(s)).`;
+      }
+
+      refreshBtn.addEventListener("click", () => {
+        loadBatches().catch(err => statusEl.textContent = err.message);
+      });
+
+      loadBatchBtn.addEventListener("click", () => {
+        loadBatchDetails(batchSelect.value).catch(err => statusEl.textContent = err.message);
+      });
+
+      loadBatches()
+        .then(() => {
+          if (batchSelect.value) return loadBatchDetails(batchSelect.value);
+          return null;
+        })
+        .catch(err => statusEl.textContent = err.message);
+    </script>
+  </body>
+</html>

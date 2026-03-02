@@ -37,11 +37,12 @@ export const loadStore = async () => {
   }
 };
 
-export const createBatch = ({ id, options }) => {
+export const createBatch = ({ id, options, ...rest }) => {
   const createdAt = nowIso();
   state.batches[id] = {
     id,
     options,
+    ...rest,
     created_at: createdAt,
     updated_at: createdAt,
     expires_at: new Date(Date.now() + config.tempTtlMinutes * 60_000).toISOString(),
@@ -94,6 +95,9 @@ export const updateJob = (jobId, patch) => {
 export const getJob = (jobId) => state.jobs[jobId] || null;
 
 export const getBatch = (batchId) => state.batches[batchId] || null;
+
+export const getAllBatches = () =>
+  toArray(state.batches).sort((a, b) => (a.created_at > b.created_at ? -1 : 1));
 
 export const getBatchJobs = (batchId) =>
   toArray(state.jobs)

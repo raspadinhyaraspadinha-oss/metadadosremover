@@ -38,6 +38,8 @@ export const config = {
   tempTtlMinutes: intOrDefault(process.env.TEMP_TTL_MINUTES, 60),
   rateLimitWindowMs: intOrDefault(process.env.RATE_LIMIT_WINDOW_MS, 60000),
   rateLimitMax: intOrDefault(process.env.RATE_LIMIT_MAX, 80),
+  adminUser: process.env.ADMIN_USER || "",
+  adminPassword: process.env.ADMIN_PASSWORD || "",
   storageDir,
   uploadDir,
   outputDir,

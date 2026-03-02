@@ -9,13 +9,24 @@ import archiver from "archiver";
 import mime from "mime-types";
 import { v4 as uuidv4 } from "uuid";
 import { config } from "./config.js";
-import { createBatch, createJob, getBatchSnapshot, getJob, loadStore, updateBatch, updateJob } from "./store.js";
+import {
+  createBatch,
+  createJob,
+  getAllBatches,
+  getBatchSnapshot,
+  getBatchJobs,
+  getJob,
+  loadStore,
+  updateBatch,
+  updateJob
+} from "./store.js";
 import { enqueueJob, retryJob } from "./processor.js";
 import { safeFilename, getExtension, isSupportedExtension } from "./utils.js";
 import { startCleanupLoop } from "./cleanup.js";
 
 const app = express();
 const clientDistPath = path.join(process.cwd(), "dist", "client");
+const adminHtmlPath = path.join(process.cwd(), "server", "public", "admin.html");
 
 app.set("trust proxy", 1);
 app.use(cors());
@@ -52,6 +63,37 @@ const parseOptions = (rawOptions) => {
   }
 };
 
+const parseBasicAuth = (authHeader = "") => {
+  const [scheme, encoded] = authHeader.split(" ");
+  if (!scheme || scheme.toLowerCase() !== "basic" || !encoded) return null;
+  try {
+    const decoded = Buffer.from(encoded, "base64").toString("utf8");
+    const separator = decoded.indexOf(":");
+    if (separator < 0) return null;
+    return {
+      user: decoded.slice(0, separator),
+      pass: decoded.slice(separator + 1)
+    };
+  } catch {
+    return null;
+  }
+};
+
+const requireAdmin = (req, res, next) => {
+  if (!config.adminUser || !config.adminPassword) {
+    res.status(503).json({ error: "Painel admin desabilitado. Configure ADMIN_USER e ADMIN_PASSWORD." });
+    return;
+  }
+  const credentials = parseBasicAuth(req.headers.authorization || "");
+  const authorized = credentials && credentials.user === config.adminUser && credentials.pass === config.adminPassword;
+  if (!authorized) {
+    res.setHeader("WWW-Authenticate", 'Basic realm="Admin Dashboard"');
+    res.status(401).send("Credenciais admin inválidas.");
+    return;
+  }
+  next();
+};
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, uptime: process.uptime() });
 });
@@ -59,7 +101,12 @@ app.get("/api/health", (_req, res) => {
 app.post("/api/batch", (req, res) => {
   const batchId = uuidv4();
   let options = parseOptions(req.headers["x-clean-options"]);
-  createBatch({ id: batchId, options });
+  createBatch({
+    id: batchId,
+    options,
+    source_ip: req.ip,
+    user_agent: req.headers["user-agent"] || "unknown"
+  });
 
   const busboy = Busboy({
     headers: req.headers,
@@ -205,6 +252,57 @@ app.get("/api/batch/:batchId", (req, res) => {
   res.json(snapshot);
 });
 
+app.get("/api/admin/batches", requireAdmin, (req, res) => {
+  const limitRaw = Number.parseInt(req.query.limit ?? "100", 10);
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : 100;
+  const batches = getAllBatches().slice(0, limit);
+  const payload = batches.map((batch) => {
+    const jobs = getBatchJobs(batch.id);
+    const counts = jobs.reduce(
+      (acc, job) => {
+        acc.total += 1;
+        acc[job.status] = (acc[job.status] || 0) + 1;
+        return acc;
+      },
+      { total: 0, queued: 0, processing: 0, ready: 0, error: 0, uploading: 0 }
+    );
+    return {
+      batch,
+      counts
+    };
+  });
+  res.json({ batches: payload });
+});
+
+app.get("/api/admin/batch/:batchId", requireAdmin, (req, res) => {
+  const snapshot = getBatchSnapshot(req.params.batchId);
+  if (!snapshot) {
+    res.status(404).json({ error: "Batch não encontrado." });
+    return;
+  }
+  res.json(snapshot);
+});
+
+app.get("/api/admin/job/:jobId/original", requireAdmin, (req, res) => {
+  const job = getJob(req.params.jobId);
+  if (!job || !job.input_path) {
+    res.status(404).json({ error: "Original não encontrado." });
+    return;
+  }
+  res.setHeader("Content-Type", job.mimetype || "application/octet-stream");
+  res.download(job.input_path, job.original_name);
+});
+
+app.get("/api/admin/job/:jobId/clean", requireAdmin, (req, res) => {
+  const job = getJob(req.params.jobId);
+  if (!job || !job.output_path || job.status !== "ready") {
+    res.status(404).json({ error: "Arquivo limpo não disponível." });
+    return;
+  }
+  res.setHeader("Content-Type", job.mimetype || "application/octet-stream");
+  res.download(job.output_path, job.original_name);
+});
+
 app.post("/api/job/:jobId/retry", (req, res) => {
   const ok = retryJob(req.params.jobId);
   if (!ok) {
@@ -251,6 +349,14 @@ app.get("/api/batch/:batchId/download.zip", (req, res) => {
     archive.file(job.output_path, { name: job.original_name });
   }
   archive.finalize();
+});
+
+app.get("/admin", requireAdmin, (req, res) => {
+  if (!fs.existsSync(adminHtmlPath)) {
+    res.status(404).send("Arquivo do dashboard admin não encontrado.");
+    return;
+  }
+  res.sendFile(adminHtmlPath);
 });
 
 if (fs.existsSync(clientDistPath)) {
